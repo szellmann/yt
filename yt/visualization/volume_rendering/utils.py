@@ -11,6 +11,7 @@ from yt.utilities.lib.image_samplers import (
     VolumeRenderSampler,
 )
 from yt.utilities.on_demand_imports import NotAModule
+from .anari_volume_rendering import AnariSampler
 
 try:
     from yt.utilities.lib.embree_mesh import mesh_traversal  # type: ignore
@@ -85,6 +86,13 @@ def new_volume_render_sampler(camera, render_source):
         kwargs["zbuffer"] = np.ones(params["image"].shape[:2], "float64")
     sampler = VolumeRenderSampler(*args, **kwargs)
     return sampler
+
+
+def new_anari_volume_render_sampler(camera, render_source):
+    params = ensure_code_unit_params(camera._get_sampler_params(render_source))
+    params.update(transfer_function=render_source.transfer_function)
+    params.update(num_samples=render_source.num_samples)
+    return AnariSampler(camera, render_source, params)
 
 
 def new_interpolated_projection_sampler(camera, render_source):

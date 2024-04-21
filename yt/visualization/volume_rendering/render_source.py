@@ -36,8 +36,11 @@ from .utils import (
     new_mesh_sampler,
     new_projection_sampler,
     new_volume_render_sampler,
+    new_anari_volume_render_sampler,
 )
 from .zbuffer_array import ZBuffer
+
+from .anari_volume_rendering import AnariVolume
 
 OptionalModule = Union[ModuleType, NotAModule]
 mesh_traversal: OptionalModule = NotAModule("pyembree")
@@ -45,7 +48,7 @@ mesh_construction: OptionalModule = NotAModule("pyembree")
 
 
 def set_raytracing_engine(
-    engine: Literal["yt", "embree"],
+    engine: Literal["yt", "embree", "anari"],
 ) -> None:
     """
     Safely switch raytracing engines at runtime.
@@ -180,7 +183,8 @@ def create_volume_source(data_source, field):
     ds = data_source.ds
     index_class = ds.index.__class__
     if issubclass(index_class, GridIndex):
-        return KDTreeVolumeSource(data_source, field)
+        #return KDTreeVolumeSource(data_source, field)
+        return AnariVolumeSource(data_source, field)
     elif issubclass(index_class, OctreeIndex):
         return OctreeVolumeSource(data_source, field)
     else:
@@ -478,6 +482,8 @@ class VolumeSource(RenderSource, abc.ABC):
         """
         if self.sampler_type == "volume-render":
             sampler = new_volume_render_sampler(camera, self)
+        elif self.sampler_type == "anari":
+            sampler = new_anari_volume_render_sampler(camera, self)
         elif self.sampler_type == "projection" and interpolated:
             sampler = new_interpolated_projection_sampler(camera, self)
         elif self.sampler_type == "projection":
@@ -540,6 +546,42 @@ class VolumeSource(RenderSource, abc.ABC):
         disp = f"<Volume Source>:{str(self.data_source)} "
         disp += f"transfer_function:{str(self._transfer_function)}"
         return disp
+
+
+class AnariVolumeSource(VolumeSource):
+    volume_method = "anari"
+
+    def __init__(self, data_source, field):
+        super().__init__(data_source, field)
+        self.sampler_type = "anari"
+
+    def _get_volume(self):
+        if self._volume is None:
+            mylog.info("Creating volume")
+            volume = AnariVolume(self.data_source.ds, data_source=self.data_source)
+            self._volume = volume
+
+        return self._volume
+
+    @validate_volume
+    def render(self, camera, zbuffer=None):
+        self.zbuffer = zbuffer
+        self.set_sampler(camera)
+        assert self.sampler is not None
+
+        self.sampler.render_frame(self.volume, self.tfh.tf, camera.lens.viewpoint)
+
+        mylog.debug("Done rendering with ANARI")
+        self.current_image = self.finalize_image(camera, self.sampler.aimage)
+
+        if zbuffer is None:
+            self.zbuffer = ZBuffer(
+                self.current_image, np.full(self.current_image.shape[:2], np.inf)
+            )
+        return self.current_image
+
+    def finalize_image(self, camera, image):
+        return super().finalize_image(camera, image)
 
 
 class KDTreeVolumeSource(VolumeSource):
